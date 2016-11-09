@@ -41,8 +41,8 @@ module.exports = function express (options, context, auth, routes, done) {
 
 // All routes ultimately get handled by this handler
 // if they have not already be redirected or responded.
-function handleRoute (seneca, options, request, reply, route, next) {
-  if (options.parseBody) { return ReadBody(request, finish) }
+function handleRoute (seneca, options, request, reply, route, next, challenges, statuses) {
+  if (options.parseBody && !request.body) { return ReadBody(request, finish) }
   finish(null, request.body || {})
 
   // Express requires a body parser to work in production
@@ -64,7 +64,9 @@ function handleRoute (seneca, options, request, reply, route, next) {
         route: route,
         params: request.params,
         query: request.query,
-        user: request.user || null
+        user: request.user || null,
+        challenges: challenges,
+        statuses: statuses,
       }
     }
 
@@ -96,14 +98,18 @@ function unsecuredRoute (seneca, options, context, method, route) {
 // depending on pass or failure. Generally this means you don't
 // need a seneca handler set as the redirects happend instead.
 function authRoute (seneca, options, context, method, route, auth) {
-  const opts = {
-    failureRedirect: route.auth.fail,
-    successRedirect: route.auth.pass
-  }
+  context[method](route.path, (request, reply, next) => {
+    auth.authenticate(route.auth.strategy, (err, user, challenges, statuses) => {
+      if (err) { return next(err) }
 
-  const strategy = auth.authenticate(route.auth.strategy, opts)
-  context[method](route.path, strategy, (request, reply, next) => {
-    handleRoute(seneca, options, request, reply, route, next)
+      if (user && route.auth.pass) {
+        return reply.redirect(route.auth.pass)
+      }
+      if (!user && route.auth.fail) {
+        return reply.redirect(route.auth.fail)
+      }
+      handleRoute(seneca, options, request, reply, route, next, challenges, statuses)
+    })(request, reply, next)
   })
 }
 
